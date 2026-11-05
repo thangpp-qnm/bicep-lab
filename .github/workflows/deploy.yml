@@ -1,0 +1,72 @@
+name: deploy-bicep
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['infra/**']
+  push:
+    branches: [main]
+    paths: ['infra/**']
+
+permissions:
+  id-token: write   # bắt buộc cho OIDC
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: az bicep build --file infra/main.bicep
+
+  whatif-dev:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - run: az deployment group what-if -g rg-lab-bicep-dev -p infra/dev.bicepparam
+
+  whatif-prod:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - run: az deployment group what-if -g rg-lab-bicep-prod -p infra/prod.bicepparam
+
+  deploy-dev:
+    needs: whatif-dev
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - run: az deployment group create -g rg-lab-bicep-dev -p infra/dev.bicepparam
+
+  deploy-prod:
+    needs: [deploy-dev, whatif-prod]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: prod   # job dừng chờ phê duyệt ở đây
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - run: az deployment group create -g rg-lab-bicep-prod -p infra/prod.bicepparam
